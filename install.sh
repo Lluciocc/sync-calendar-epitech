@@ -23,7 +23,7 @@ My Epitech → Google Calendar · Installation Firefox
 
   bash install.sh [options]
 
-  --version v1.0.0    Choisir une release (par défaut : dernière stable)
+  --version v1.0.0    Choisir une release (v1.0.0 ou dev-COMMIT)
   --dir CHEMIN       Dossier des fichiers installés
   --dev              Charger la version temporaire, même si un XPI signé existe
   --no-open          Préparer les fichiers sans ouvrir Firefox
@@ -54,7 +54,7 @@ while (( $# )); do
     *) fail "Option inconnue : $1" ;;
   esac
 done
-[[ $VERSION == latest || $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'Version attendue : v1.0.0.'
+[[ $VERSION == latest || $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || $VERSION =~ ^dev-[0-9a-f]{7,40}$ ]] || fail 'Version attendue : v1.0.0 ou dev-COMMIT.'
 for tool in python3 mktemp; do command -v "$tool" >/dev/null || fail "Commande requise : $tool"; done
 
 printf '\n%s  ◆  MY EPITECH%s\n' "$BLUE$BOLD" "$RESET"
@@ -96,11 +96,28 @@ USE_GH=0
 if command -v gh >/dev/null && GH_HOST=github.com gh auth status >/dev/null 2>&1; then USE_GH=1; fi
 if (( ! USE_GH )); then command -v curl >/dev/null || fail 'Installe curl, ou gh et connecte-toi avec gh auth login.'; fi
 curl_get() { curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --retry 2 --connect-timeout 15 --max-time 120 "$@"; }
+api_get() {
+  local endpoint=$1 destination=$2
+  if (( USE_GH )); then GH_HOST=github.com gh api "$endpoint" >"$destination";
+  else curl_get "https://api.github.com/$endpoint" -o "$destination"; fi
+}
 metadata() {
-  local endpoint="repos/$REPO/releases/latest"
-  if [[ $VERSION != latest ]]; then endpoint="repos/$REPO/releases/tags/$VERSION"; fi
-  if (( USE_GH )); then GH_HOST=github.com gh api "$endpoint" >"$WORK/release.json";
-  else curl_get "https://api.github.com/$endpoint" -o "$WORK/release.json"; fi
+  if [[ $VERSION != latest ]]; then
+    api_get "repos/$REPO/releases/tags/$VERSION" "$WORK/release.json"
+    return
+  fi
+  if api_get "repos/$REPO/releases/latest" "$WORK/release.json" 2>"$WORK/latest-error.log"; then return; fi
+  api_get "repos/$REPO/releases?per_page=20" "$WORK/releases.json" || return
+  python3 - "$WORK/releases.json" "$WORK/release.json" <<'PYTHON'
+import json, sys
+releases = json.load(open(sys.argv[1]))
+releases = [r for r in releases if not r.get('draft')]
+if not releases:
+    raise SystemExit('Aucune release disponible. Attendre la fin du workflow GitHub Actions.')
+selected = max(releases, key=lambda r: r.get('published_at') or r.get('created_at') or '')
+with open(sys.argv[2], 'w') as f:
+    json.dump(selected, f)
+PYTHON
 }
 printf '  %s01 / 04%s  Trouver la bonne version\n' "$BOLD" "$RESET"
 if (( ! USE_GH )); then printf '  %sDépôt privé ? Utilise gh auth login pour autoriser le téléchargement.%s\n' "$DIM" "$RESET"; fi
@@ -110,10 +127,16 @@ python3 - "$WORK/release.json" "$FORCE_DEV" >"$WORK/selection" <<'PY'
 import json, re, sys
 release = json.load(open(sys.argv[1]))
 tag = release.get('tag_name', '')
-if not re.fullmatch(r'v\d+\.\d+\.\d+', tag):
-    raise SystemExit('Release invalide : tag vMAJOR.MINOR.PATCH attendu.')
-version = tag[1:]
+if not re.fullmatch(r'(v\d+\.\d+\.\d+|dev-[0-9a-f]{7,40})', tag):
+    raise SystemExit('Release invalide : tag de version ou de développement attendu.')
 assets = {a['name']: a for a in release.get('assets', [])}
+archives = [re.fullmatch(r'sync-calendar-epitech-(\d+\.\d+\.\d+)\.zip', n) for n in assets]
+versions = [m.group(1) for m in archives if m]
+if len(versions) != 1:
+    raise SystemExit('Archive ZIP de version absente ou ambiguë.')
+version = versions[0]
+if tag.startswith('v') and tag != 'v' + version:
+    raise SystemExit('Le tag ne correspond pas à la version du paquet.')
 signed = f'sync-calendar-epitech-{version}.xpi'
 name = signed if sys.argv[2] == '0' and signed in assets else f'sync-calendar-epitech-{version}.zip'
 for required in (name, 'SHA256SUMS'):
@@ -123,13 +146,14 @@ for required in (name, 'SHA256SUMS'):
     if assets[required].get('browser_download_url') != expected:
         raise SystemExit('Adresse de téléchargement inattendue.')
 print(tag)
+print(version)
 print(name)
 print('signed' if name == signed else 'dev')
 print(assets[name]['browser_download_url'])
 print(assets['SHA256SUMS']['browser_download_url'])
 PY
 # readarray/mapfile is absent from Bash 3 on macOS.
-{ IFS= read -r TAG; IFS= read -r ASSET; IFS= read -r MODE; IFS= read -r ASSET_URL; IFS= read -r SUM_URL; } <"$WORK/selection"
+{ IFS= read -r TAG; IFS= read -r RELEASE_VERSION; IFS= read -r ASSET; IFS= read -r MODE; IFS= read -r ASSET_URL; IFS= read -r SUM_URL; } <"$WORK/selection"
 
 download() {
   local name=$1 url=$2
@@ -141,9 +165,9 @@ run 'Récupération du paquet Firefox' download "$ASSET" "$ASSET_URL"
 run 'Récupération des empreintes SHA-256' download 'SHA256SUMS' "$SUM_URL"
 
 verify() {
-  python3 - "$WORK" "$ASSET" "$TAG" "$MODE" <<'PY'
+  python3 - "$WORK" "$ASSET" "$RELEASE_VERSION" "$MODE" <<'PY'
 import hashlib, json, pathlib, re, stat, sys, zipfile
-root, name, tag, mode = pathlib.Path(sys.argv[1]), *sys.argv[2:]
+root, name, version, mode = pathlib.Path(sys.argv[1]), *sys.argv[2:]
 entries = {}
 for line in (root/'SHA256SUMS').read_text().splitlines():
     match = re.fullmatch(r'([0-9a-f]{64})  ([A-Za-z0-9._-]+)', line)
@@ -162,7 +186,7 @@ with zipfile.ZipFile(root/name) as package:
         if path.is_absolute() or '..' in path.parts or '\\' in info.filename or stat.S_ISLNK(info.external_attr >> 16):
             raise SystemExit('Chemin interdit dans l’archive.')
     manifest = json.loads(package.read('manifest.json'))
-    if manifest.get('version') != tag[1:] or manifest.get('browser_specific_settings',{}).get('gecko',{}).get('id') != 'my-calendar-sync@lluciocc.local':
+    if manifest.get('version') != version or manifest.get('browser_specific_settings',{}).get('gecko',{}).get('id') != 'my-calendar-sync@lluciocc.local':
         raise SystemExit('Identité ou version de l’extension inattendue.')
     if mode == 'signed' and 'META-INF/mozilla.rsa' not in package.namelist():
         raise SystemExit('Signature Mozilla absente. Firefox vérifiera aussi sa validité.')

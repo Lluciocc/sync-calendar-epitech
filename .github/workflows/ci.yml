@@ -19,6 +19,8 @@ jobs:
     name: Test and package
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      version: ${{ steps.package.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -50,7 +52,11 @@ jobs:
           PY
 
       - name: Build extension archives
-        run: python3 scripts/build.py
+        id: package
+        run: |
+          python3 scripts/build.py
+          version=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Validate Firefox package
         run: npx --yes --package=web-ext@10.5.0 web-ext lint --source-dir dist/extension --no-input
@@ -100,7 +106,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -115,12 +121,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REF: ${{ github.ref_name }}
+          IS_VERSION_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+          COMMIT_SHA: ${{ github.sha }}
+          EXTENSION_VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
+          if [[ "$IS_VERSION_TAG" == true ]]; then
+            RELEASE_TAG="$RELEASE_REF"
+          else
+            RELEASE_TAG="dev-$COMMIT_SHA"
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo '::error::This release already exists. Use a new version tag.'
-            exit 1
+            if [[ "$IS_VERSION_TAG" == true ]]; then
+              echo '::error::This version release already exists. Use a new version tag.'
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+            exit 0
           fi
           cat > release-notes.md <<'NOTES'
           ## Installation
@@ -132,5 +150,13 @@ jobs:
           - A `.xpi` without `-unsigned` is signed by Mozilla and can be installed permanently after Firefox confirmation.
           - If no signed XPI is attached, configure both Mozilla signing secrets for a future version.
           NOTES
-          gh release create "$RELEASE_TAG" dist/* \
-            --verify-tag --title "$RELEASE_TAG" --notes-file release-notes.md
+          if [[ "$IS_VERSION_TAG" == true ]]; then
+            gh release create "$RELEASE_TAG" dist/* \
+              --verify-tag --title "$RELEASE_TAG" --notes-file release-notes.md
+          else
+            printf '\nDevelopment build of extension %s from commit %s. Unsigned.\n' \
+              "$EXTENSION_VERSION" "$COMMIT_SHA" >> release-notes.md
+            gh release create "$RELEASE_TAG" dist/* \
+              --target "$COMMIT_SHA" --prerelease --latest=false \
+              --title "Development · ${COMMIT_SHA:0:7}" --notes-file release-notes.md
+          fi

@@ -38,8 +38,11 @@ if args[:2]==['auth','status']:
     sys.exit(0)
 if args[0]=='api':
     files=[p for p in assets.iterdir() if p.is_file()]
-    tag='v'+os.environ['MOCK_VERSION']
-    print(json.dumps({'tag_name':tag,'assets':[{'name':p.name,'browser_download_url':'https://github.com/Lluciocc/sync-calendar-epitech/releases/download/'+tag+'/'+p.name} for p in files]}))
+    tag='dev-'+'a'*40 if os.environ.get('MOCK_DEV')=='1' else 'v'+os.environ['MOCK_VERSION']
+    release={'tag_name':tag,'draft':False,'prerelease':tag.startswith('dev-'),'published_at':'2026-10-30T16:00:00Z','assets':[{'name':p.name,'browser_download_url':'https://github.com/Lluciocc/sync-calendar-epitech/releases/download/'+tag+'/'+p.name} for p in files]}
+    if os.environ.get('MOCK_DEV')=='1' and args[1].endswith('/latest'):
+        sys.exit(1)
+    print(json.dumps([release] if 'releases?' in args[1] else release))
 elif args[:2]==['release','download']:
     shutil.copyfile(assets/args[args.index('--pattern')+1], pathlib.Path(args[args.index('--dir')+1])/args[args.index('--pattern')+1])
 else:
@@ -48,9 +51,9 @@ else:
         fake.chmod(0o755)
         self.destination = self.root/'installed with spaces'
 
-    def run_installer(self, *args):
+    def run_installer(self, *args, dev=False):
         env = {**os.environ, 'PATH':str(self.bin)+os.pathsep+os.environ['PATH'],
-               'MOCK_ASSETS':str(self.assets), 'MOCK_VERSION':VERSION, 'NO_COLOR':'1'}
+               'MOCK_ASSETS':str(self.assets), 'MOCK_VERSION':VERSION, 'MOCK_DEV':'1' if dev else '0', 'NO_COLOR':'1'}
         return subprocess.run(['bash', str(ROOT/'install.sh'), '--no-open', '--dir', str(self.destination), *args],
                               env=env, capture_output=True, text=True, timeout=15)
 
@@ -75,6 +78,12 @@ else:
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertTrue(previous.is_dir())
         self.assertNotEqual(previous, current.resolve())
+
+    def test_falls_back_to_development_release_without_stable_tag(self):
+        result = self.run_installer(dev=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn('dev-' + 'a'*40, result.stdout)
+        self.assertTrue((self.destination/'current/extension/manifest.json').is_file())
 
     def test_signed_package_selected(self):
         signed = self.assets/f'sync-calendar-epitech-{VERSION}.xpi'

@@ -10,7 +10,7 @@ Le dépôt est privé : installer [GitHub CLI](https://cli.github.com/) et se co
 gh api repos/Lluciocc/sync-calendar-epitech/contents/install.sh --jq .content | base64 --decode | bash
 ```
 
-L’installateur télécharge la dernière release, vérifie son empreinte SHA-256 et prépare les fichiers dans `~/.local/share/sync-calendar-epitech`. Il affiche une progression colorée en quatre étapes, avec animation dans un terminal compatible. `NO_COLOR=1` désactive les couleurs ; aucune animation n’est affichée si la sortie est redirigée.
+L’installateur télécharge la dernière release stable (ou la dernière préversion si aucune stable n’existe), vérifie son empreinte SHA-256 et prépare les fichiers dans `~/.local/share/sync-calendar-epitech`. Il affiche une progression colorée en quatre étapes, avec animation dans un terminal compatible. `NO_COLOR=1` désactive les couleurs ; aucune animation n’est affichée si la sortie est redirigée.
 
 - **XPI signé disponible :** ouvre Firefox pour confirmer l’installation ; si nécessaire, installer le fichier indiqué depuis la roue dentée de `about:addons`.
 - **Pas encore de XPI signé :** prépare la version de développement et ouvre `about:debugging`. Il reste à sélectionner **Charger un module complémentaire temporaire**, puis le `manifest.json` indiqué. Firefox retirera ce chargement temporaire au redémarrage.
@@ -138,9 +138,17 @@ Le workflow `.github/workflows/ci.yml` s’exécute sur chaque push de `main`, s
 2. Construit une archive reproductible à partir d’une liste explicite des neuf fichiers de l’extension. Les identifiants locaux, scripts, tests et fichiers CI ne sont jamais empaquetés.
 3. Valide le paquet avec `web-ext lint`.
 4. Sur un tag, signe le paquet si les deux secrets Mozilla sont configurés.
-5. Calcule `SHA256SUMS` et publie les fichiers en artefact Actions. Sur un tag valide, crée également une GitHub Release avec ces fichiers.
+5. Calcule `SHA256SUMS` et publie les fichiers en artefact Actions. Sur un tag valide, crée une GitHub Release stable avec ces fichiers. Sur un push de `main` ou un lancement manuel depuis `main`, publie aussi une préversion `dev-COMMIT`, sans exiger de tag manuel.
 
-### Publier une version
+### Publication automatique sur main
+
+Chaque push de `main` et chaque lancement manuel du workflow depuis `main` publie une préversion dans **Releases**, sous le tag `dev-COMMIT`. Les pull requests construisent et testent uniquement le paquet. La première préversion permet donc d’utiliser l’installateur immédiatement, sans créer de tag à la main.
+
+Sans release stable, l’installateur sélectionne la préversion publiée la plus récente. Quand une stable existe, il la privilégie. Pour choisir explicitement une préversion : `bash install.sh --version dev-COMMIT` (remplacer COMMIT par le SHA affiché dans la release).
+
+Les préversions sont non signées. La signature Mozilla reste réservée aux tags de version pour éviter de soumettre plusieurs fois une même version du manifeste.
+
+### Publier une version stable
 
 Le tag doit correspondre exactement à la version de `manifest.json`. Pour la première release avec le manifeste actuel :
 
@@ -148,7 +156,7 @@ Le tag doit correspondre exactement à la version de `manifest.json`. Pour la pr
 git tag v1.0.0 && git push origin v1.0.0
 ```
 
-Pour la suivante, modifier d’abord la version du manifeste, committer et pousser, puis créer le tag correspondant (ex. `v1.0.1`). Une release déjà existante n’est pas écrasée. Le workflow de publication doit disposer de l’autorisation `contents: write`, déclarée uniquement sur son job de release.
+Pour la suivante, modifier d’abord la version du manifeste, committer et pousser, puis créer le tag correspondant (ex. `v1.0.1`). Une release stable déjà existante n’est pas écrasée. Les préversions `dev-COMMIT` sont rattachées au commit exact ; relancer le même workflow peut actualiser leurs fichiers. Le workflow de publication doit disposer de l’autorisation `contents: write`, déclarée uniquement sur son job de release.
 
 Chaque release contient :
 
