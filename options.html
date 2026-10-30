@@ -1,0 +1,22 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>My → Google · Réglages</title><link rel="stylesheet" href="style.css"></head><body><main>
+<h1>My → Google Calendar</h1><p>Ton planning Epitech, copié à la première visite du jour.</p>
+<div id="notice" class="notice" role="status">Chargement…</div>
+<section><h2>1. Connexion Google</h2><p>Importe le JSON d’un client OAuth <strong>Application de bureau</strong>, puis autorise Google. Le compte déjà ouvert dans Firefox pourra être choisi.</p>
+<p><a href="https://developers.google.com/workspace/calendar/api/quickstart/python" target="_blank" rel="noopener">Créer un client OAuth et activer Calendar API</a> · Les étapes Python ne sont pas nécessaires.</p>
+<label for="credentials">Fichier JSON Google OAuth</label><input id="credentials" type="file" accept="application/json,.json">
+<p id="googleState"></p><button id="connect">Connecter Google</button><button id="disconnect" class="secondary">Déconnecter</button>
+<p class="tiny">Connexion avec PKCE et accès hors ligne. Les autorisations sont mémorisées dans ce profil Firefox. Aucun serveur intermédiaire.</p>
+<details><summary>Diagnostic de redirection Firefox</summary><code id="redirect"></code></details></section>
+<section><h2>2. Planning My</h2><p id="myState"></p><button id="openMy" class="secondary">Ouvrir My Epitech</button>
+<p>La session est récupérée automatiquement dans <code>@account</code> quand tu ouvres My. Le refresh token My n’est pas copié : le site renouvelle lui-même sa session.</p>
+<label><input id="enabled" type="checkbox"> Synchroniser à la première visite du jour sur My</label>
+<div class="row"><div><label for="start">Du (inclus)</label><input id="start" type="date"></div><div><label for="end">Au (inclus)</label><input id="end" type="date"></div></div>
+<small>Dates vides : toute l’année scolaire, de septembre à août, selon la session My.</small>
+<label for="semesters">Semestres</label><input id="semesters" type="text" placeholder="Automatique, ou 1,2"><small>Vide : semestre actuel. Écris 1,2 pour demander les deux semestres si tu y as accès.</small>
+<label><input id="categoryInTitle" type="checkbox"> Afficher le code du module dans le titre</label>
+<label for="colors">Couleur par module (JSON)</label><textarea id="colors" spellcheck="false"></textarea>
+<small>IDs : 1 lavande, 2 sauge, 3 violet, 4 rose, 5 jaune, 6 orange, 7 cyan, 8 gris, 9 bleu, 10 vert, 11 rouge. Une valeur #RRGGBB choisit la couleur Google la plus proche.</small><br>
+<button id="save">Enregistrer les réglages</button></section>
+<section><h2>3. Synchronisation</h2><p>Crée et met à jour les événements dans « Epitech — My ». Les événements absents de My ne sont pas supprimés. Le jour est calculé dans le fuseau Europe/Paris.</p>
+<button id="force">Synchroniser maintenant</button><p class="tiny">Les couleurs My et ton sous-créneau de soutenance ne sont pas présents dans la réponse planning fournie. Les catégories correspondent ici aux modules.</p></section>
+</main><script src="options.js"></script></body></html>

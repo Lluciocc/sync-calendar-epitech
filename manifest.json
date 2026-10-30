@@ -1,0 +1,53 @@
+{
+  "manifest_version": 2,
+  "name": "My Epitech → Google Calendar",
+  "version": "1.0.0",
+  "description": "Copie le planning My à la première visite du jour, avec modules, couleurs et détails.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "my-calendar-sync@lluciocc.local",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "authenticationInfo",
+          "personallyIdentifyingInfo",
+          "websiteContent"
+        ]
+      }
+    }
+  },
+  "permissions": [
+    "storage",
+    "identity",
+    "https://my.epitech.eu/*",
+    "https://www.googleapis.com/*",
+    "https://oauth2.googleapis.com/*"
+  ],
+  "background": {
+    "scripts": [
+      "core.js",
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://my.epitech.eu/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_action": {
+    "default_title": "Synchronisation Epitech",
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_security_policy": "script-src 'self'; object-src 'none'"
+}
