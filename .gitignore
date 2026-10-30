@@ -11,3 +11,9 @@ node_modules/
 web-ext-artifacts/
 *.zip
 *.xpi
+
+# Build output and Python caches
+dist/
+signed/
+__pycache__/
+*.pyc

@@ -1,0 +1,136 @@
+name: Build and release Firefox extension
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate JavaScript and installer
+        run: |
+          for script in ./*.js; do node --check "$script"; done
+          bash -n install.sh
+          shellcheck install.sh
+          node --test test.cjs
+          python3 -m unittest discover -s scripts -p 'test_*.py' -v
+
+      - name: Check release version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          tag = os.environ['RELEASE_TAG']
+          version = json.load(open('manifest.json'))['version']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+', tag) or tag != 'v' + version:
+              raise SystemExit(f'Tag {tag} must match manifest version v{version}')
+          PY
+
+      - name: Build extension archives
+        run: python3 scripts/build.py
+
+      - name: Validate Firefox package
+        run: npx --yes --package=web-ext@10.5.0 web-ext lint --source-dir dist/extension --no-input
+
+      - name: Sign for Firefox when Mozilla credentials are configured
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$WEB_EXT_API_KEY" && -z "$WEB_EXT_API_SECRET" ]]; then
+            echo '::notice::Mozilla signing is not configured. Publishing development archives only.'
+            exit 0
+          fi
+          if [[ -z "$WEB_EXT_API_KEY" || -z "$WEB_EXT_API_SECRET" ]]; then
+            echo '::error::Set both AMO_JWT_ISSUER and AMO_JWT_SECRET.'
+            exit 1
+          fi
+          npx --yes --package=web-ext@10.5.0 web-ext sign \
+            --source-dir dist/extension --artifacts-dir signed \
+            --channel unlisted --approval-timeout 600000 --no-input
+          python3 - <<'PY'
+          import json, pathlib, shutil, zipfile
+          files = list(pathlib.Path('signed').glob('*.xpi'))
+          if len(files) != 1:
+              raise SystemExit('Expected exactly one signed XPI from Mozilla')
+          version = json.load(open('manifest.json'))['version']
+          with zipfile.ZipFile(files[0]) as z:
+              if 'META-INF/mozilla.rsa' not in z.namelist():
+                  raise SystemExit('Mozilla signature missing')
+          shutil.copyfile(files[0], f'dist/sync-calendar-epitech-{version}.xpi')
+          PY
+
+      - name: Finalize asset checksums
+        run: python3 scripts/build.py --checksums-only
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firefox-extension-${{ github.sha }}
+          path: |
+            dist/*.zip
+            dist/*.xpi
+            dist/install.sh
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firefox-extension-${{ github.sha }}
+          path: dist
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo '::error::This release already exists. Use a new version tag.'
+            exit 1
+          fi
+          cat > release-notes.md <<'NOTES'
+          ## Installation
+
+          Download `install.sh`, or follow the one-line installation command in the README.
+          SHA-256 checksums for all assets are included in `SHA256SUMS`.
+
+          - The `.zip` and `-unsigned.xpi` archives are for temporary/development loading.
+          - A `.xpi` without `-unsigned` is signed by Mozilla and can be installed permanently after Firefox confirmation.
+          - If no signed XPI is attached, configure both Mozilla signing secrets for a future version.
+          NOTES
+          gh release create "$RELEASE_TAG" dist/* \
+            --verify-tag --title "$RELEASE_TAG" --notes-file release-notes.md
