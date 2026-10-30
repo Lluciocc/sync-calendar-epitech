@@ -66,6 +66,19 @@ Chaque événement conserve :
 
 L’API fournie ne renvoie pas les couleurs de l’interface ni une catégorie explicite. Les catégories sont ici les modules (`unitCode` / `unitName`), pas les labels natifs de Google. Le JSON des couleurs accepte les IDs Google 1 à 11 ou une couleur `#RRGGBB`, convertie vers la couleur Google disponible la plus proche. La palette est limitée ; plusieurs modules peuvent partager une couleur.
 
+Couleurs par défaut :
+
+| Module | Couleur demandée |
+|---|---|
+| Graphique — `G-MUL-100` | Rose (Google 4) |
+| PSU — `G-PSU-100` | `#013afb` |
+| Maths — `G-MAT-100` | `#013afb` |
+| Anglais — `G-ENG-100` | `#e03131` |
+| CPE — `G-CPE-110` | `#01ca7a` |
+| Administratif — `S-ADM-000` | `#099268` |
+
+À la mise à jour, les anciennes couleurs par défaut enregistrées sont remplacées par cette palette. Les couleurs personnalisées qui diffèrent des anciens défauts sont conservées. Cliquer **Synchroniser maintenant** pour recolorer les événements déjà importés.
+
 ## Ce qui est synchronisé
 
 L’extension crée les événements absents et actualise ceux dont les données My ont changé. Un identifiant stable et des propriétés privées évitent les doublons à la relance et après une interruption. Elle ne supprime jamais les événements disparus de My, conformément à un fonctionnement de copie/enregistrement.

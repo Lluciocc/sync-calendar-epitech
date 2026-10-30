@@ -1,12 +1,25 @@
 /* global Core, browser */
-const DEFAULT={enabled:true,start:'',end:'',semesters:[],categoryInTitle:true,
-  colors:{'G-CPE-110':'9','G-PSU-100':'6','G-MUL-100':'3','G-MAT-100':'5','G-ENG-100':'10','G-COM-100':'7','G-PRO-100':'2','S-ADM-000':'8'}};
+const DEFAULT={colorPresetVersion:1,enabled:true,start:'',end:'',semesters:[],categoryInTitle:true,
+  colors:{'G-CPE-110':'#01ca7a','G-PSU-100':'#013afb','G-MUL-100':'4','G-MAT-100':'#013afb','G-ENG-100':'#e03131','G-COM-100':'7','G-PRO-100':'2','S-ADM-000':'#099268'}};
 const SCOPE='https://www.googleapis.com/auth/calendar.app.created openid email';
 const BASE='https://www.googleapis.com/calendar/v3';
 let running=null, authRunning=null, lastAttempt=0, activeVisit=false;
 const get=async key=>(await browser.storage.local.get(key))[key];
 const put=async (key,value)=>browser.storage.local.set({[key]:value});
-async function config(){ return {...DEFAULT,...await get('config')}; }
+async function config(){
+  const saved=await get('config');
+  if(!saved)return {...DEFAULT,colors:{...DEFAULT.colors}};
+  const cfg={...DEFAULT,...saved,colors:{...DEFAULT.colors,...saved.colors}};
+  if(saved.colorPresetVersion!==DEFAULT.colorPresetVersion){
+    const previous={'G-CPE-110':'9','G-PSU-100':'6','G-MUL-100':'3','G-MAT-100':'5','G-ENG-100':'10','S-ADM-000':'8'};
+    for(const [code,value] of Object.entries(previous)){
+      if(saved.colors?.[code]===value)cfg.colors[code]=DEFAULT.colors[code];
+    }
+    cfg.colorPresetVersion=DEFAULT.colorPresetVersion;
+    await put('config',cfg);
+  }
+  return cfg;
+}
 async function status(text,error=false) {
   await put('status',{text,error,at:new Date().toISOString()});
   await browser.browserAction.setBadgeText({text:error?'!':running?'…':''});
