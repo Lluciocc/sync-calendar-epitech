@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "My Epitech → Google Calendar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Copie le planning My à la première visite du jour, avec modules, couleurs et détails.",
   "browser_specific_settings": {
     "gecko": {
@@ -43,11 +43,16 @@
   ],
   "browser_action": {
     "default_title": "Synchronisation Epitech",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": "icon.svg"
   },
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true
   },
-  "content_security_policy": "script-src 'self'; object-src 'none'"
+  "content_security_policy": "script-src 'self'; object-src 'none'",
+  "icons": {
+    "48": "icon.svg",
+    "96": "icon.svg"
+  }
 }

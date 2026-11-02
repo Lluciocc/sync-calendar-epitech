@@ -46,6 +46,21 @@ Pour appliquer immédiatement une modification ou relancer un import : bouton **
 
 **Installation temporaire :** Firefox retire les extensions temporaires au redémarrage. Les archives ZIP et `-unsigned.xpi` ne sont pas signées. Pour une installation durable dans Firefox standard, utiliser le XPI signé par Mozilla, publié lorsque les secrets de signature sont configurés dans la CI. Le fichier `manifest.json` se trouve à la racine des archives. Le nom d’extension et son identifiant sont stables ; garder le stockage de l’extension pour conserver l’agenda cible. Une désinstallation ou une perte de ce stockage peut entraîner la création d’un nouvel agenda à la réinstallation.
 
+## Interface
+
+Clique sur l’icône calendrier de l’extension pour ouvrir le panneau :
+
+- L’adresse du compte Google connecté est visible dans le panneau, à côté de **Déconnecter**. Après déconnexion, l’interface affiche explicitement **Déconnecté de Google**.
+- **Connecter Google** apparaît si aucun compte n’est connecté ou si l’autorisation doit être renouvelée. Si les identifiants OAuth manquent, le bouton ouvre la configuration.
+- **À jour** indique un import réussi aujourd’hui, dans le fuseau Paris, avec les réglages actuels.
+- **Pas à jour** apparaît après un changement de journée, une modification des réglages, une erreur ou avant le premier import. Ce statut ne vérifie pas en continu les changements sur My.
+- **Synchroniser manuellement** lance l’import immédiatement et affiche sa progression. Il est désactivé pendant un import ou si une connexion doit être rétablie.
+- **Ta semaine** permet de choisir un jour et de consulter les événements du dernier import avec leurs horaires, salles et couleurs.
+
+Aucun fichier ICS à télécharger ou à importer : les événements My sont écrits directement dans l’agenda Google dédié. La connexion Google lance le premier import ; si My n’est pas connecté, un onglet My s’ouvre et l’import reprend dès que la session est détectée. Ce premier import demandé par la connexion reste possible même si les visites automatiques quotidiennes sont désactivées.
+
+La page de réglages propose le même tableau de bord, les connexions My/Google, les dates d’import et des sélecteurs de couleur par module. Le cache d’aperçu reste dans le stockage local de l’extension et est séparé par compte My et Google ; seuls les titres, horaires, salles, modules et couleurs y sont conservés.
+
 ## Connexion Google : configuration unique
 
 Les cookies de Google ne donnent pas à une extension l’autorisation d’écrire dans Calendar. L’extension utilise donc la fenêtre officielle Google, où tu choisis ton compte déjà connecté et autorises l’accès.
@@ -135,28 +150,28 @@ Permissions : stockage local, identité OAuth, accès à `my.epitech.eu`, aux AP
 Le workflow `.github/workflows/ci.yml` s’exécute sur chaque push de `main`, sur les pull requests, sur les tags `v*` et manuellement depuis Actions.
 
 1. Vérifie la syntaxe JavaScript/Bash, lance ShellCheck et les tests Node/Python.
-2. Construit une archive reproductible à partir d’une liste explicite des neuf fichiers de l’extension. Les identifiants locaux, scripts, tests et fichiers CI ne sont jamais empaquetés.
+2. Construit une archive reproductible à partir d’une liste explicite des fichiers exécutables de l’extension. Les identifiants locaux, scripts, tests et fichiers CI ne sont jamais empaquetés.
 3. Valide le paquet avec `web-ext lint`.
 4. Sur un tag, signe le paquet si les deux secrets Mozilla sont configurés.
-5. Calcule `SHA256SUMS` et publie les fichiers en artefact Actions. Sur un tag valide, crée une GitHub Release stable avec ces fichiers. Sur un push de `main` ou un lancement manuel depuis `main`, publie aussi une préversion `dev-COMMIT`, sans exiger de tag manuel.
+5. Calcule `SHA256SUMS` et publie les fichiers en artefact Actions. Sur un tag valide, crée une GitHub Release stable avec ces fichiers. Sur `main`, si les clés Mozilla sont configurées et que la version du manifeste n’a pas encore de release, signe et publie automatiquement cette nouvelle version stable. Sinon publie une préversion `dev-COMMIT`.
 
 ### Publication automatique sur main
 
-Chaque push de `main` et chaque lancement manuel du workflow depuis `main` publie une préversion dans **Releases**, sous le tag `dev-COMMIT`. Les pull requests construisent et testent uniquement le paquet. La première préversion permet donc d’utiliser l’installateur immédiatement, sans créer de tag à la main.
+Chaque push de `main` et chaque lancement manuel depuis `main` publie un paquet dans **Releases**. Si la version du manifeste est nouvelle et que les deux clés Mozilla sont configurées, le workflow la signe et crée la release stable `vVERSION` automatiquement. Si cette version existe déjà, ou sans clés Mozilla, il publie une préversion `dev-COMMIT`. Les pull requests construisent et testent uniquement le paquet. La première préversion permet donc d’utiliser l’installateur immédiatement, sans créer de tag à la main.
 
 Sans release stable, l’installateur sélectionne la préversion publiée la plus récente. Quand une stable existe, il la privilégie. Pour choisir explicitement une préversion : `bash install.sh --version dev-COMMIT` (remplacer COMMIT par le SHA affiché dans la release).
 
-Les préversions sont non signées. La signature Mozilla reste réservée aux tags de version pour éviter de soumettre plusieurs fois une même version du manifeste.
+Les préversions sont non signées. La signature Mozilla s’exécute pour les tags de version et pour une nouvelle version de manifeste publiée depuis `main`. Il faut augmenter la version du manifeste pour publier une nouvelle mise à jour signée.
 
 ### Publier une version stable
 
-Le tag doit correspondre exactement à la version de `manifest.json`. Pour la première release avec le manifeste actuel :
+Le tag doit correspondre exactement à la version de `manifest.json`. Pour publier la version de l’interface avec le manifeste actuel :
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.1.0 && git push origin v1.1.0
 ```
 
-Pour la suivante, modifier d’abord la version du manifeste, committer et pousser, puis créer le tag correspondant (ex. `v1.0.1`). Une release stable déjà existante n’est pas écrasée. Les préversions `dev-COMMIT` sont rattachées au commit exact ; relancer le même workflow peut actualiser leurs fichiers. Le workflow de publication doit disposer de l’autorisation `contents: write`, déclarée uniquement sur son job de release.
+Pour la suivante, modifier d’abord la version du manifeste, committer et pousser, puis créer le tag correspondant (ex. `v1.1.1`). Une release stable déjà existante n’est pas écrasée. Les préversions `dev-COMMIT` sont rattachées au commit exact ; relancer le même workflow peut actualiser leurs fichiers. Le workflow de publication doit disposer de l’autorisation `contents: write`, déclarée uniquement sur son job de release.
 
 Chaque release contient :
 

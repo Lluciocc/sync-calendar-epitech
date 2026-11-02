@@ -34,7 +34,7 @@ async function timedFetch(url,opts={}) {
 async function tokenExchange(params) {
   const res=await timedFetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(params)});
   const data=await res.json();
-  if(!res.ok || !data.access_token) throw new Error('Connexion Google à renouveler dans les paramètres'+(data.error?` (${data.error}).`:'.'));
+  if(!res.ok || !data.access_token){await put('googleNeedsReconnect',true);throw new Error('Connexion Google à renouveler dans les paramètres'+(data.error?` (${data.error}).`:'.'));}
   return data;
 }
 async function googleToken(interactive=false) {
@@ -67,6 +67,7 @@ async function googleToken(interactive=false) {
     if(!infoRes.ok) throw new Error('Impossible de vérifier le compte Google.');
     const info=await infoRes.json();
     if(!info.sub) throw new Error('Identité Google absente.');
+    await put('googleNeedsReconnect',false);
     await put('google',{...data,refresh_token:data.refresh_token||old?.refresh_token,expiresAt:Date.now()+data.expires_in*1000,sub:info.sub,email:info.email||''});
     return data.access_token;
   })();
@@ -123,7 +124,9 @@ async function perform(force) {
   const credential=await get('credentials');
   const account=await Core.hash(claim.login),key=await Core.hash(credential.client_id+':'+identity.sub+':'+account);
   const today=Core.day(),success=await get('success')||{};
-  if(!Core.due(success[key]?.day,today,force)){await status('Déjà synchronisé aujourd’hui.');return;}
+  const settingsHash=await Core.hash(Core.stable(Core.syncSettings(cfg)));
+  const previousStatus=await get('status');
+  if(!Core.due(success[key]?.day,today,force) && success[key]?.settingsHash===settingsHash && !previousStatus?.error){await status('Déjà synchronisé aujourd’hui.');return;}
   const source=await loadMy(session,cfg);
   // Construire tous les événements avant la première mutation distante.
   const paletteResult=await google('/colors');
@@ -164,7 +167,11 @@ async function perform(force) {
       }
     }
   }
-  success[key]={day:today,at:new Date().toISOString(),counts};await put('success',success);
+  const cache=await get('calendarCache')||{};
+  cache[key]=bodies.map(b=>({id:b.extendedProperties.private.myId,title:b.summary,start:b.start.dateTime,end:b.end.dateTime,location:b.location,category:b.extendedProperties.private.category,color:palette[b.colorId]}));
+  await put('calendarCache',cache);
+  success[key]={day:today,at:new Date().toISOString(),counts,total:bodies.length,settingsHash};await put('success',success);
+  await browser.storage.local.remove('syncAfterConnect');
   activeVisit=false;lastAttempt=0;
   await status(`Synchronisé : ${counts.created} créé(s), ${counts.updated} modifié(s), ${counts.unchanged} inchangé(s).`);
 }
@@ -186,7 +193,8 @@ async function visit(message,sender){
     if(parsed.token!==current?.token && activeVisit)lastAttempt=0;
   }}
   activeVisit=true;
-  if((await config()).enabled)sync(false).catch(()=>{});
+  const pending=!!await get('syncAfterConnect');
+  if(pending || (await config()).enabled)sync(pending).catch(()=>{});
   return {ok:true};
 }
 browser.runtime.onMessage.addListener((m,sender)=>{
@@ -195,8 +203,19 @@ browser.runtime.onMessage.addListener((m,sender)=>{
   return (async()=>{
     try{
       if(m.type==='state'){
-        const g=await get('google'),my=await get('mySession');let login='';try{login=my?Core.claims(my.token).login:'';}catch{}
-        return {ok:true,config:await config(),credentials:!!await get('credentials'),googleEmail:g?.email||'',googleConnected:!!g?.refresh_token,myLogin:login,status:await get('status'),running:!!running,redirect:redirect()};
+        const g=await get('google'),my=await get('mySession'),cred=await get('credentials');
+        const cfg=await config(),currentStatus=await get('status');
+        let login='',myExpired=false,key='';
+        try{if(my){const c=Core.claims(my.token);login=c.login;myExpired=c.exp*1000<=Date.now();}}catch{}
+        if(login && g?.sub && cred?.client_id)key=await Core.hash(cred.client_id+':'+g.sub+':'+await Core.hash(login));
+        const lastSuccess=key?(await get('success'))?.[key]||null:null;
+        const cached=key?(await get('calendarCache'))?.[key]||[]:[];
+        const settingsHash=await Core.hash(Core.stable(Core.syncSettings(cfg)));
+        const googleConnected=!!g?.refresh_token && !await get('googleNeedsReconnect');
+        return {ok:true,config:cfg,credentials:!!cred,googleEmail:g?.email||'',googleConnected,
+          myLogin:login,myExpired,status:currentStatus,running:!!running,redirect:redirect(),
+          lastSuccess,calendarEvents:cached,
+          syncState:Core.syncState({connected:googleConnected,running:!!running,lastSuccess,error:currentStatus?.error,today:Core.day(),settingsHash})};
       }
       if(m.type==='config'){
         if(running)throw new Error('Attends la fin de la synchronisation.');
@@ -207,15 +226,34 @@ browser.runtime.onMessage.addListener((m,sender)=>{
         await put('config',cfg);return {ok:true};
       }
       if(m.type==='credentials'){
-        if(running)throw new Error('Attends la fin de la synchronisation.');
+        if(running || authRunning)throw new Error('Attends la fin de la synchronisation.');
         const c=m.data?.installed;
         if(!c?.client_id?.endsWith('.apps.googleusercontent.com'))throw new Error('JSON Google Desktop attendu (champ installed.client_id).');
         const old=await get('credentials');await put('credentials',{client_id:c.client_id,client_secret:c.client_secret||''});
         if(old?.client_id!==c.client_id)await browser.storage.local.remove('google');
         return {ok:true};
       }
-      if(m.type==='connect') {if(running)throw new Error('Attends la fin de la synchronisation.');await googleToken(true);lastAttempt=0;await status('Google connecté. Ouvre My ou force la synchronisation.');return {ok:true};}
-      if(m.type==='disconnect'){if(running)throw new Error('Attends la fin de la synchronisation.');await browser.storage.local.remove('google');await status('Google déconnecté localement.');return {ok:true};}
+      if(m.type==='connect') {
+        if(running)throw new Error('Attends la fin de la synchronisation.');
+        await googleToken(true);lastAttempt=0;
+        await put('syncAfterConnect',true);
+        const session=await get('mySession');
+        let ready=false;
+        try{ready=!!session && Core.claims(session.token).exp*1000>Date.now()+15000;}catch{}
+        if(ready){
+          await status('Google connecté. Synchronisation de ton planning…');
+          sync(true).catch(()=>{});
+        }else{
+          await status('Google connecté. Connecte My dans l’onglet ouvert pour lancer l’import.');
+          await browser.tabs.create({url:'https://my.epitech.eu/planning'});
+        }
+        return {ok:true,syncStarted:ready,needsMy:!ready};
+      }
+      if(m.type==='disconnect'){
+        if(running || authRunning)throw new Error('Attends la fin de la connexion ou de la synchronisation.');
+        for(const key of ['google','googleNeedsReconnect','syncAfterConnect'])await browser.storage.local.remove(key);
+        await status('Tu es déconnecté de Google dans cette extension.');return {ok:true};
+      }
       if(m.type==='force'){sync(true).catch(()=>{});return {ok:true};}
       return {ok:false,error:'Commande inconnue.'};
     }catch(e){return {ok:false,error:e.message};}

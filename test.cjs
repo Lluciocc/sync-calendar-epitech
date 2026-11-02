@@ -34,14 +34,17 @@ test('détails, couleurs, horaires de séance et ID stable',async()=>{
 function harness(){
   const store={credentials:{client_id:'test.apps.googleusercontent.com'},google:{access_token:'fake',refresh_token:'fake',expiresAt:Date.now()+3600000,sub:'google-user'},
     config:{start:'2026-11-23',end:'2026-11-29',semesters:[1]}};
-  const records=new Map(),calls={my:0,calendar:0,insert:0,patch:0};
+  const records=new Map(),calls={my:0,calendar:0,insert:0,patch:0,openMy:0};
   let listener,failed=false,source=structuredClone(sample);
   const response=(data,status=200)=>new Response(JSON.stringify(data),{status});
-  const browser={identity:{getRedirectURL:()=> 'https://extension-id.extensions.allizom.org/'},storage:{local:{get:async k=>({[k]:structuredClone(store[k])}),set:async obj=>Object.assign(store,structuredClone(obj)),remove:async k=>{delete store[k];}}},
+  const browser={identity:{getRedirectURL:()=> 'https://extension-id.extensions.allizom.org/',launchWebAuthFlow:async({url})=>{const auth=new URL(url);assert.equal(auth.searchParams.get('code_challenge_method'),'S256');return 'http://127.0.0.1/mozoauth2/extension-id?'+new URLSearchParams({code:'fake-code',state:auth.searchParams.get('state')});}},storage:{local:{get:async k=>({[k]:structuredClone(store[k])}),set:async obj=>Object.assign(store,structuredClone(obj)),remove:async k=>{delete store[k];}}},
+    tabs:{create:async({url})=>{assert.equal(url,'https://my.epitech.eu/planning');calls.openMy++;}},
     browserAction:{setBadgeText:async()=>{},setBadgeBackgroundColor:async()=>{}},
     runtime:{getURL:p=>'moz-extension://test/'+p,onMessage:{addListener:fn=>{listener=fn;}}}};
-  const context=vm.createContext({Core,browser,URL,URLSearchParams,crypto,TextEncoder,AbortController,setTimeout,clearTimeout,console,
+  const context=vm.createContext({Core,browser,URL,URLSearchParams,crypto,TextEncoder,btoa,AbortController,setTimeout,clearTimeout,console,
     fetch:async(url,opts)=>{
+      if(url==='https://oauth2.googleapis.com/token')return response({access_token:'fake-token',refresh_token:'fake-refresh',expires_in:3600});
+      if(url==='https://www.googleapis.com/oauth2/v3/userinfo')return response({sub:'google-user',email:'student@example.org'});
       if(url.startsWith('https://my.epitech.eu/')){calls.my++;await new Promise(r=>setImmediate(r));return response([source],failed?401:200);}
       const p=new URL(url).pathname;
       if(p.endsWith('/colors'))return response({event:Object.fromEntries(Object.entries(Core.PALETTE).map(([k,v])=>[k,{background:v}]))});
@@ -73,4 +76,56 @@ test('messages provenant de sites étrangers refusés',async()=>{
   const fakeMy=await h.command({type:'myVisit',session:{token:token()}},{url:'https://example.org/',frameId:0,tab:{id:2}});assert.equal(fakeMy.ok,false);
   // Aucun secret n'est inclus dans la réponse state destinée à l'interface.
   const json=JSON.stringify(result);assert.equal(json.includes('access_token'),false);assert.equal(json.includes('refresh_token'),false);
+});
+test('état à jour : exige un import du jour avec les mêmes réglages et sans erreur',()=>{
+  const s={connected:true,running:false,lastSuccess:{day:'2026-10-30',settingsHash:'one'},today:'2026-10-30',settingsHash:'one'};
+  assert.equal(Core.syncState(s),'fresh');
+  assert.equal(Core.syncState({...s,settingsHash:'two'}),'stale');
+  assert.equal(Core.syncState({...s,today:'2026-10-31'}),'stale');
+  assert.equal(Core.syncState({...s,error:true}),'stale');
+  assert.equal(Core.syncState({...s,running:true}),'syncing');
+  assert.equal(Core.syncState({...s,connected:false}),'disconnected');
+});
+test('interface : état et aperçu suivent le compte actif et les réglages sauvegardés',async()=>{
+  const h=harness();await h.visit();await h.idle();
+  let s=await h.command({type:'state'});
+  assert.equal(s.syncState,'fresh');assert.equal(s.lastSuccess.total,1);assert.equal(s.calendarEvents.length,1);
+  assert.equal(s.calendarEvents[0].title,'[G-CPE-110] Bootstrap');
+  h.store.config.categoryInTitle=false;
+  s=await h.command({type:'state'});assert.equal(s.syncState,'stale');
+  h.store.google.sub='another-google-account';
+  s=await h.command({type:'state'});assert.equal(s.lastSuccess,null);assert.equal(s.calendarEvents.length,0);
+  h.store.googleNeedsReconnect=true;
+  s=await h.command({type:'state'});assert.equal(s.googleConnected,false);assert.equal(s.syncState,'disconnected');
+});
+test('un réglage modifié permet un nouvel import automatique le même jour',async()=>{
+  const h=harness();await h.visit();await h.idle();
+  h.store.config.categoryInTitle=false;
+  await h.visit();await h.idle();
+  assert.equal(h.calls.my,2);assert.equal(h.calls.patch,1);
+  assert.equal(nextTitle(), 'Bootstrap');
+  function nextTitle(){return [...h.records.values()][0].summary;}
+});
+test('connexion Google : email affiché et import automatique sans fichier ICS',async()=>{
+  const h=harness();
+  h.store.mySession={token:token()};
+  delete h.store.google;
+  const result=await h.command({type:'connect'});
+  assert.equal(result.ok,true);assert.equal(result.syncStarted,true);
+  await h.idle();
+  assert.equal(h.calls.my,1);assert.equal(h.calls.insert,1);assert.equal(h.calls.openMy,0);
+  const s=await h.command({type:'state'});
+  assert.equal(s.googleConnected,true);assert.equal(s.googleEmail,'student@example.org');assert.equal(s.syncState,'fresh');
+  assert.equal(h.store.syncAfterConnect,undefined);
+  assert.equal((await h.command({type:'disconnect'})).ok,true);
+  const disconnected=await h.command({type:'state'});
+  assert.equal(disconnected.googleConnected,false);assert.equal(disconnected.googleEmail,'');assert.equal(disconnected.syncState,'disconnected');
+});
+test('connexion Google sans My : ouvre My puis importe à la détection de session, même sans auto quotidien',async()=>{
+  const h=harness();delete h.store.google;h.store.config.enabled=false;
+  const result=await h.command({type:'connect'});
+  assert.equal(result.ok,true);assert.equal(result.needsMy,true);assert.equal(h.calls.openMy,1);assert.equal(h.calls.my,0);
+  assert.equal(h.store.syncAfterConnect,true);
+  await h.visit();await h.idle();
+  assert.equal(h.calls.my,1);assert.equal(h.calls.insert,1);assert.equal(h.store.syncAfterConnect,undefined);
 });

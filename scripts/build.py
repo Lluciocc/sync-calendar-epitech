@@ -10,7 +10,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ('manifest.json', 'core.js', 'background.js', 'content.js', 'options.html',
-           'options.js', 'popup.html', 'popup.js', 'style.css')
+           'options.js', 'popup.html', 'popup.js', 'style.css', 'ui.js', 'icon.svg')
 
 
 def build(destination):

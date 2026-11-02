@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       version: ${{ steps.package.outputs.version }}
+      channel: ${{ steps.channel.outputs.channel }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,11 +59,32 @@ jobs:
           version=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Select publication channel
+        id: channel
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          IS_VERSION_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+          EXTENSION_VERSION: ${{ steps.package.outputs.version }}
+          AMO_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+          channel=dev
+          if [[ "$IS_VERSION_TAG" == true ]]; then
+            channel=stable
+          elif [[ -n "$AMO_ISSUER" && -n "$AMO_SECRET" ]] && \
+               ! gh release view "v$EXTENSION_VERSION" >/dev/null 2>&1; then
+            channel=stable
+          fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - name: Validate Firefox package
         run: npx --yes --package=web-ext@10.5.0 web-ext lint --source-dir dist/extension --no-input
 
       - name: Sign for Firefox when Mozilla credentials are configured
-        if: startsWith(github.ref, 'refs/tags/')
+        if: steps.channel.outputs.channel == 'stable'
         env:
           WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
           WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
@@ -121,19 +143,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_REF: ${{ github.ref_name }}
           IS_VERSION_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+          IS_STABLE_RELEASE: ${{ needs.build.outputs.channel == 'stable' }}
           COMMIT_SHA: ${{ github.sha }}
           EXTENSION_VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          if [[ "$IS_VERSION_TAG" == true ]]; then
-            RELEASE_TAG="$RELEASE_REF"
+          if [[ "$IS_STABLE_RELEASE" == true ]]; then
+            RELEASE_TAG="v$EXTENSION_VERSION"
           else
             RELEASE_TAG="dev-$COMMIT_SHA"
           fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            if [[ "$IS_VERSION_TAG" == true ]]; then
+            if [[ "$IS_STABLE_RELEASE" == true ]]; then
               echo '::error::This version release already exists. Use a new version tag.'
               exit 1
             fi
@@ -150,9 +172,11 @@ jobs:
           - A `.xpi` without `-unsigned` is signed by Mozilla and can be installed permanently after Firefox confirmation.
           - If no signed XPI is attached, configure both Mozilla signing secrets for a future version.
           NOTES
-          if [[ "$IS_VERSION_TAG" == true ]]; then
+          if [[ "$IS_STABLE_RELEASE" == true ]]; then
+            tag_args=(--target "$COMMIT_SHA")
+            if [[ "$IS_VERSION_TAG" == true ]]; then tag_args=(--verify-tag); fi
             gh release create "$RELEASE_TAG" dist/* \
-              --verify-tag --title "$RELEASE_TAG" --notes-file release-notes.md
+              "${tag_args[@]}" --title "$RELEASE_TAG" --notes-file release-notes.md
           else
             printf '\nDevelopment build of extension %s from commit %s. Unsigned.\n' \
               "$EXTENSION_VERSION" "$COMMIT_SHA" >> release-notes.md

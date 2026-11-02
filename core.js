@@ -85,6 +85,15 @@
     body.extendedProperties={private:{managedBy:'my-firefox-v1',myId:String(e.id),myAccount:accountId,category:cat,sourceHash:await hash(stable(body))}};
     return body;
   }
-  const api={PALETTE,claims,account,day,due,dates,weeks,color,stable,hash,validEvent,eventBody};
+  function syncSettings(config) {
+    return {start:config.start,end:config.end,semesters:config.semesters,colors:config.colors,categoryInTitle:config.categoryInTitle};
+  }
+  function syncState({connected,running,lastSuccess,error,today,settingsHash}) {
+    if(!connected)return 'disconnected';
+    if(running)return 'syncing';
+    if(error)return 'stale';
+    return lastSuccess?.day===today && lastSuccess?.settingsHash===settingsHash ? 'fresh' : 'stale';
+  }
+  const api={syncSettings,syncState,PALETTE,claims,account,day,due,dates,weeks,color,stable,hash,validEvent,eventBody};
   root.Core=api; if(typeof module!=='undefined') module.exports=api;
 })(globalThis);
