@@ -20,8 +20,8 @@ async function config(){
   }
   return cfg;
 }
-async function status(text,error=false) {
-  await put('status',{text,error,at:new Date().toISOString()});
+async function status(text,error=false,help=null) {
+  await put('status',{text,error,...help,at:new Date().toISOString()});
   await browser.browserAction.setBadgeText({text:error?'!':running?'…':''});
   await browser.browserAction.setBadgeBackgroundColor({color:error?'#c23945':'#4765dc'});
 }
@@ -63,6 +63,11 @@ async function googleToken(interactive=false) {
       // Ne jamais réutiliser le refresh_token d'un autre compte sélectionné.
       if(!data.refresh_token) throw new Error('Google n’a pas fourni d’accès hors ligne. Révoquer puis reconnecter cette application.');
     } else throw new Error('Connecter Google dans les paramètres.');
+    const granted=data.scope ?? (interactive?SCOPE:old?.scope);
+    if(typeof granted==='string' && !granted.split(/\s+/).includes(SCOPE.split(' ')[0])){
+      await put('googleNeedsReconnect',true);
+      throw new Error('L’autorisation Google Calendar a été refusée. Reconnecte Google et coche l’accès aux agendas créés par cette application.');
+    }
     const infoRes=await timedFetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+data.access_token}});
     if(!infoRes.ok) throw new Error('Impossible de vérifier le compte Google.');
     const info=await infoRes.json();
@@ -75,14 +80,24 @@ async function googleToken(interactive=false) {
 }
 async function google(path,options={},retried=false) {
   const token=await googleToken(false);
-  let response;
+  let response,diagnostic;
   for(let i=0;i<5;i++) {
     response=await timedFetch(BASE+path,{method:options.method||'GET',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},...(options.body?{body:JSON.stringify(options.body)}:{})});
-    if(![429,500,502,503,504].includes(response.status)) break;
-    await new Promise(r=>setTimeout(r,Math.min(16000,1000*2**i)));
+    diagnostic=null;
+    if(!response.ok){
+      let payload={};try{payload=await response.json();}catch{}
+      diagnostic=Core.calendarError(payload,response.status);
+    }
+    if(![429,500,502,503,504].includes(response.status) && !diagnostic?.retryable)break;
+    if(i<4)await new Promise(r=>setTimeout(r,Math.min(16000,1000*2**i)));
   }
   if(response.status===401 && !retried){const old=await get('google');await put('google',{...old,expiresAt:0});return google(path,options,true);}
-  if(!response.ok){const e=new Error(`Google Calendar : HTTP ${response.status}.`);e.status=response.status;throw e;}
+  if(!response.ok){
+    if(diagnostic.reconnect)await put('googleNeedsReconnect',true);
+    const operation=path==='/colors'?'lecture des couleurs':path==='/calendars'?'création de l’agenda':options.method==='POST'?'création d’un événement':options.method==='PATCH'?'mise à jour d’un événement':'lecture du calendrier';
+    const e=new Error(`Google Calendar : HTTP ${response.status} (${diagnostic.reason}, ${operation}). ${diagnostic.message}`);
+    e.status=response.status;e.help=diagnostic.help;throw e;
+  }
   return response.status===204?{}:response.json();
 }
 async function loadMy(session,cfg) {
@@ -127,9 +142,10 @@ async function perform(force) {
   const settingsHash=await Core.hash(Core.stable(Core.syncSettings(cfg)));
   const previousStatus=await get('status');
   if(!Core.due(success[key]?.day,today,force) && success[key]?.settingsHash===settingsHash && !previousStatus?.error){await status('Déjà synchronisé aujourd’hui.');return;}
+  // Vérifier l’accès Google avant de télécharger toute l’année My.
+  const paletteResult=await google('/colors');
   const source=await loadMy(session,cfg);
   // Construire tous les événements avant la première mutation distante.
-  const paletteResult=await google('/colors');
   const palette=Object.fromEntries(Object.entries(paletteResult.event).map(([id,c])=>[id,c.background]));
   const bodies=await Promise.all(source.events.map(e=>Core.eventBody(e,cfg,account,palette)));
   const calendars=await get('calendars')||{};
@@ -179,7 +195,7 @@ async function sync(force=false) {
   if(running)return running;
   if(!force && Date.now()-lastAttempt<5*60*1000)return;
   lastAttempt=Date.now();
-  running=perform(force).catch(async error=>{await status(error.message,true);throw error;});
+  running=perform(force).catch(async error=>{await status(error.message,true,error.help);throw error;});
   try{return await running;}finally{running=null;await browser.browserAction.setBadgeText({text:(await get('status'))?.error?'!':''});}
 }
 async function visit(message,sender){

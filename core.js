@@ -94,6 +94,35 @@
     if(error)return 'stale';
     return lastSuccess?.day===today && lastSuccess?.settingsHash===settingsHash ? 'fresh' : 'stale';
   }
-  const api={syncSettings,syncState,PALETTE,claims,account,day,due,dates,weeks,color,stable,hash,validEvent,eventBody};
+  function calendarError(payload,httpStatus) {
+    const error=payload?.error||{};
+    const legacy=(error.errors||[]).map(e=>e.reason);
+    const detailed=(error.details||[]).map(e=>e.reason);
+    const reasons=[...legacy,...detailed].filter(r=>typeof r==='string');
+    const has=(...wanted)=>reasons.some(r=>wanted.includes(r));
+    const reason=reasons.find(r=>/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/.test(r))||'unknown';
+    let message='Accès refusé par Google. Vérifie les permissions de ce compte sur l’agenda dédié.';
+    let help=null,reconnect=false;
+    const retryable=httpStatus===429 || has('rateLimitExceeded','userRateLimitExceeded','RATE_LIMIT_EXCEEDED');
+    if(has('accessNotConfigured','SERVICE_DISABLED')){
+      message='Google Calendar API est désactivée dans le projet OAuth. Active cette API dans le projet utilisé par tes identifiants Google, puis relance la synchronisation.';
+      const consumer=(error.details||[]).map(d=>d.metadata?.consumer).find(c=>/^projects\/\d+$/.test(c||''));
+      help={helpLabel:'Activer Google Calendar API',helpUrl:'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com'+(consumer?'?project='+consumer.split('/')[1]:'')};
+    }else if(has('insufficientPermissions','ACCESS_TOKEN_SCOPE_INSUFFICIENT')){
+      message='L’autorisation Calendar manque. Reconnecte Google et autorise la gestion des agendas créés par cette application.';reconnect=true;
+    }else if(retryable){
+      message='Google limite temporairement les requêtes. Réessaie la synchronisation dans quelques minutes.';
+    }else if(has('quotaExceeded','dailyLimitExceeded','QUOTA_EXCEEDED')){
+      message='Le quota Google Calendar du projet est atteint. Vérifie les quotas dans Google Cloud avant de réessayer.';
+    }else if(has('domainPolicy','ORG_RESTRICTION_VIOLATION')){
+      message='Une règle de ton organisation bloque cette application. Contacte l’administrateur Google Workspace.';
+    }else if(httpStatus===401){
+      message='La connexion Google n’est plus valide. Reconnecte ton compte.';reconnect=true;
+    }else if(httpStatus!==403){
+      message='La requête Google Calendar a échoué. Réessaie et consulte le motif indiqué.';
+    }
+    return {message,reason,help,reconnect,retryable};
+  }
+  const api={calendarError,syncSettings,syncState,PALETTE,claims,account,day,due,dates,weeks,color,stable,hash,validEvent,eventBody};
   root.Core=api; if(typeof module!=='undefined') module.exports=api;
 })(globalThis);

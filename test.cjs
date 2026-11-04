@@ -31,7 +31,7 @@ test('détails, couleurs, horaires de séance et ID stable',async()=>{
   assert.equal(next.extendedProperties.private.myId,body.extendedProperties.private.myId);
   assert.notEqual(next.extendedProperties.private.sourceHash,body.extendedProperties.private.sourceHash);
 });
-function harness(){
+function harness({googleFailure=null,grantedScope=null}={}){
   const store={credentials:{client_id:'test.apps.googleusercontent.com'},google:{access_token:'fake',refresh_token:'fake',expiresAt:Date.now()+3600000,sub:'google-user'},
     config:{start:'2026-11-23',end:'2026-11-29',semesters:[1]}};
   const records=new Map(),calls={my:0,calendar:0,insert:0,patch:0,openMy:0};
@@ -43,10 +43,11 @@ function harness(){
     runtime:{getURL:p=>'moz-extension://test/'+p,onMessage:{addListener:fn=>{listener=fn;}}}};
   const context=vm.createContext({Core,browser,URL,URLSearchParams,crypto,TextEncoder,btoa,AbortController,setTimeout,clearTimeout,console,
     fetch:async(url,opts)=>{
-      if(url==='https://oauth2.googleapis.com/token')return response({access_token:'fake-token',refresh_token:'fake-refresh',expires_in:3600});
+      if(url==='https://oauth2.googleapis.com/token')return response({access_token:'fake-token',refresh_token:'fake-refresh',expires_in:3600,...(grantedScope===null?{}:{scope:grantedScope})});
       if(url==='https://www.googleapis.com/oauth2/v3/userinfo')return response({sub:'google-user',email:'student@example.org'});
       if(url.startsWith('https://my.epitech.eu/')){calls.my++;await new Promise(r=>setImmediate(r));return response([source],failed?401:200);}
       const p=new URL(url).pathname;
+      if(p.endsWith('/colors') && googleFailure)return response(googleFailure,403);
       if(p.endsWith('/colors'))return response({event:Object.fromEntries(Object.entries(Core.PALETTE).map(([k,v])=>[k,{background:v}]))});
       if(p.endsWith('/calendars')&&opts.method==='POST'){calls.calendar++;return response({id:'calendar'});}
       if(p.endsWith('/events')&&opts.method==='GET')return response({items:[...records.values()]});
@@ -128,4 +129,34 @@ test('connexion Google sans My : ouvre My puis importe à la détection de sessi
   assert.equal(h.store.syncAfterConnect,true);
   await h.visit();await h.idle();
   assert.equal(h.calls.my,1);assert.equal(h.calls.insert,1);assert.equal(h.store.syncAfterConnect,undefined);
+});
+
+test('403 Google : distingue API désactivée, permissions et limite de requêtes',()=>{
+  const disabled=Core.calendarError({error:{errors:[{reason:'accessNotConfigured'}],details:[{reason:'SERVICE_DISABLED',metadata:{consumer:'projects/123456'}}]}},403);
+  assert.match(disabled.message,/désactivée/);assert.equal(disabled.reconnect,false);
+  assert.equal(disabled.help.helpUrl,'https://console.cloud.google.com/apis/library/calendar-json.googleapis.com?project=123456');
+  const missing=Core.calendarError({error:{details:[{reason:'ACCESS_TOKEN_SCOPE_INSUFFICIENT'}]}},403);
+  assert.equal(missing.reconnect,true);assert.equal(missing.retryable,false);
+  assert.equal(Core.calendarError({error:{errors:[{reason:'rateLimitExceeded'}]}},403).retryable,true);
+  assert.equal(Core.calendarError({},403).reconnect,false);
+});
+test('API Calendar désactivée : message actionnable avant My et aucune écriture',async()=>{
+  const h=harness({googleFailure:{error:{errors:[{reason:'accessNotConfigured'}]}}});
+  await h.visit();await h.idle();
+  assert.equal(h.calls.my,0);assert.equal(h.calls.calendar,0);
+  assert.match(h.store.status.text,/accessNotConfigured/);assert.match(h.store.status.text,/lecture des couleurs/);
+  assert.match(h.store.status.helpUrl,/calendar-json/);assert.equal(h.store.googleNeedsReconnect,undefined);
+});
+test('permissions Calendar refusées : affiche le besoin de reconnexion',async()=>{
+  const h=harness({googleFailure:{error:{errors:[{reason:'insufficientPermissions'}]}}});
+  await h.visit();await h.idle();
+  const state=await h.command({type:'state'});
+  assert.equal(state.googleConnected,false);assert.equal(state.syncState,'disconnected');
+  assert.equal(h.calls.my,0);assert.match(state.status.text,/Reconnecte Google/);
+});
+test('consentement partiel : ne considère pas Google connecté sans accès Calendar',async()=>{
+  const h=harness({grantedScope:'openid email'});delete h.store.google;
+  const result=await h.command({type:'connect'});
+  assert.equal(result.ok,false);assert.match(result.error,/autorisation Google Calendar/);
+  assert.equal(h.store.googleNeedsReconnect,true);assert.equal(h.calls.my,0);
 });

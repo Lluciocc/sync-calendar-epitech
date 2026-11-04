@@ -218,3 +218,14 @@ node --test test.cjs
 La syntaxe des scripts et les fichiers du manifeste ont également été vérifiés. Aucune connexion OAuth Google réelle ni installation dans Firefox n’a été effectuée dans cet environnement. Le fonctionnement de bout en bout reste à valider après l’import de ton client OAuth et ton autorisation. Le format des événements est basé sur la réponse réelle My vérifiée lors du programme précédent.
 
 Références : [OAuth Firefox et redirection locale](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/identity), [OAuth Google Desktop et PKCE](https://developers.google.com/identity/protocols/oauth2/native-app), [API Calendar](https://developers.google.com/workspace/calendar/api/v3/reference/events), [installation temporaire Firefox](https://extensionworkshop.com/documentation/develop/temporary-installation-in-firefox/).
+
+## Erreurs Google Calendar 403
+
+Depuis la version 1.1.1, le message indique le motif et l’opération refusée :
+
+- `accessNotConfigured` / `SERVICE_DISABLED` : activer **Google Calendar API** dans le même projet Google Cloud que le client OAuth importé. Le bouton de l’erreur ouvre la configuration ; si Google fournit le numéro du projet, il est sélectionné dans le lien. Relancer ensuite l’import.
+- `insufficientPermissions` / `ACCESS_TOKEN_SCOPE_INSUFFICIENT` : reconnecter Google et accorder l’autorisation Calendar demandée. Le bouton **Connecter Google** réapparaît automatiquement.
+- `rateLimitExceeded` / `userRateLimitExceeded` : nouvelle tentative avec attente progressive, puis message explicite si Google maintient la limite.
+- Un refus générique d’accès à l’agenda n’est pas traité comme une autorisation OAuth manquante : il faut vérifier les permissions de l’agenda avec le compte connecté.
+
+Le contrôle d’accès Google précède la récupération du planning My. L’application conserve le scope limité `calendar.app.created` ; elle ne demande pas l’accès à tous les agendas pour masquer une erreur 403.

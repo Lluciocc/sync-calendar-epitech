@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "My Epitech → Google Calendar",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Copie le planning My à la première visite du jour, avec modules, couleurs et détails.",
   "browser_specific_settings": {
     "gecko": {

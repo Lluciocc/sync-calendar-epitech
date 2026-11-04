@@ -85,6 +85,9 @@
     $('eventCount').textContent=total===null?'—':String(total)+' importé'+(total>1?'s':'');
     const notice=$('notice');notice.replaceChildren();notice.hidden=true;notice.classList.remove('error');
     if(s.status?.error){notice.hidden=false;notice.classList.add('error');notice.textContent=s.status.text;}
+    if(s.status?.helpUrl?.startsWith('https://console.cloud.google.com/apis/library/calendar-json.googleapis.com')){
+      const link=document.createElement('a');link.href=s.status.helpUrl;link.target='_blank';link.rel='noopener';link.textContent=s.status.helpLabel||'Configurer Google Calendar';link.className='error-help';notice.append(document.createElement('br'),link);
+    }
     if(connected&&(!s.myLogin||s.myExpired)){
       notice.hidden=false;const open=document.createElement('button');open.type='button';open.className='text-button';open.textContent='Ouvrir My Epitech →';open.addEventListener('click',()=>browser.tabs.create({url:'https://my.epitech.eu/planning'}));notice.append(open);
     }
