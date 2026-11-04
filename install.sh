@@ -26,7 +26,7 @@ My Epitech → Google Calendar · Installation Firefox
   --version v1.0.0    Choisir une release (v1.0.0 ou dev-COMMIT)
   --dir CHEMIN       Dossier des fichiers installés
   --dev              Charger la version temporaire, même si un XPI signé existe
-  --no-open          Préparer les fichiers sans ouvrir Firefox
+  --no-open          Préparer sans ouvrir Firefox ni modifier le presse-papiers
   -h, --help         Afficher cette aide
 
 Sans XPI signé, les fichiers sont préparés pour about:debugging.
@@ -216,19 +216,32 @@ PY
 run 'Préparation du dossier local' stage
 CURRENT="$INSTALL_ROOT/current"
 
+copy_path() {
+  local value=$1
+  if command -v wl-copy >/dev/null && printf '%s' "$value" | wl-copy >/dev/null 2>&1; then return 0; fi
+  if command -v xclip >/dev/null && printf '%s' "$value" | xclip -selection clipboard >/dev/null 2>&1; then return 0; fi
+  if command -v xsel >/dev/null && printf '%s' "$value" | xsel --clipboard --input >/dev/null 2>&1; then return 0; fi
+  if command -v pbcopy >/dev/null && printf '%s' "$value" | pbcopy >/dev/null 2>&1; then return 0; fi
+  return 1
+}
+
 printf '\n  %s04 / 04%s  À toi de jouer\n' "$BOLD" "$RESET"
 if [[ $MODE == signed ]]; then
   printf '\n  %s✓ Paquet signé prêt%s\n' "$GREEN$BOLD" "$RESET"
-  printf "    Dans Firefox, accepte la demande d’installation.\n"
-  printf "    Si elle ne s’ouvre pas : about:addons → roue dentée\n"
+  XPI_PATH="$CURRENT/$ASSET"
+  if (( OPEN_BROWSER )); then
+    if copy_path "$XPI_PATH"; then
+      printf '    %s✓ Chemin du XPI copié dans le presse-papiers%s\n' "$GREEN" "$RESET"
+    else
+      printf '    Presse-papiers indisponible : copie le chemin ci-dessous.\n'
+    fi
+  fi
+  printf '    Firefox → Extensions → roue dentée\n'
   printf '    → Installer un module depuis un fichier…\n'
-  printf '    %s%s/%s%s\n' "$BLUE" "$CURRENT" "$ASSET" "$RESET"
-  TARGET=$(python3 - "$CURRENT/$ASSET" <<'PY'
-from pathlib import Path
-import sys
-print(Path(sys.argv[1]).expanduser().resolve().as_uri())
-PY
-)
+  printf '    Dans le sélecteur : Ctrl+L, puis Ctrl+V pour coller le chemin.\n'
+  printf '    %s%s%s\n' "$BLUE" "$XPI_PATH" "$RESET"
+  TARGET='about:addons'
+
 else
   printf '\n  %s◆ Version de développement préparée%s\n' "$PINK$BOLD" "$RESET"
   printf '    Aucun XPI signé sélectionné : chargement temporaire.\n'

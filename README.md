@@ -10,9 +10,9 @@ Le dépôt est privé : installer [GitHub CLI](https://cli.github.com/) et se co
 gh api repos/Lluciocc/sync-calendar-epitech/contents/install.sh --jq .content | base64 --decode | bash
 ```
 
-L’installateur télécharge la dernière release stable (ou la dernière préversion si aucune stable n’existe), vérifie son empreinte SHA-256 et prépare les fichiers dans `~/.local/share/sync-calendar-epitech`. Il affiche une progression colorée en quatre étapes, avec animation dans un terminal compatible. `NO_COLOR=1` désactive les couleurs ; aucune animation n’est affichée si la sortie est redirigée.
+L’installateur télécharge la dernière release stable (ou la dernière préversion si aucune stable n’existe), vérifie son empreinte SHA-256 et prépare les fichiers dans `~/.local/share/sync-calendar-epitech`. Il affiche une progression colorée en quatre étapes, avec animation dans un terminal compatible. `NO_COLOR=1` désactive les couleurs ; aucune animation n’est affichée si la sortie est redirigée. Le presse-papiers utilise `wl-copy` sous Wayland, `xclip` ou `xsel` sous X11, et `pbcopy` sous macOS. Si aucun n’est disponible, le chemin est affiché pour une copie manuelle. `--no-open` prépare uniquement les fichiers : il n’ouvre pas Firefox et ne modifie pas le presse-papiers.
 
-- **XPI signé disponible :** ouvre Firefox pour confirmer l’installation ; si nécessaire, installer le fichier indiqué depuis la roue dentée de `about:addons`.
+- **XPI signé disponible :** ouvre le gestionnaire `about:addons` et copie le chemin local du XPI dans le presse-papiers. Choisir la roue dentée → **Installer un module depuis un fichier…**, puis **Ctrl+L / Ctrl+V** dans le sélecteur de fichiers.
 - **Pas encore de XPI signé :** prépare la version de développement et ouvre `about:debugging`. Il reste à sélectionner **Charger un module complémentaire temporaire**, puis le `manifest.json` indiqué. Firefox retirera ce chargement temporaire au redémarrage.
 
 L’installateur ne modifie aucun profil Firefox, ne désactive aucune protection et ne demande pas `sudo`. Les téléchargements privés passent par `gh`, sans inclure de token dans la commande. Une release doit avoir été publiée avant de lancer l’installation.

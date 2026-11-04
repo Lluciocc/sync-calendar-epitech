@@ -51,10 +51,11 @@ else:
         fake.chmod(0o755)
         self.destination = self.root/'installed with spaces'
 
-    def run_installer(self, *args, dev=False):
+    def run_installer(self, *args, dev=False, open_browser=False):
         env = {**os.environ, 'PATH':str(self.bin)+os.pathsep+os.environ['PATH'],
-               'MOCK_ASSETS':str(self.assets), 'MOCK_VERSION':VERSION, 'MOCK_DEV':'1' if dev else '0', 'NO_COLOR':'1'}
-        return subprocess.run(['bash', str(ROOT/'install.sh'), '--no-open', '--dir', str(self.destination), *args],
+               'MOCK_ASSETS':str(self.assets), 'MOCK_VERSION':VERSION, 'MOCK_DEV':'1' if dev else '0', 'NO_COLOR':'1',
+               'MOCK_CLIPBOARD':str(self.root/'clipboard.txt'), 'MOCK_FIREFOX':str(self.root/'firefox.txt')}
+        return subprocess.run(['bash', str(ROOT/'install.sh'), *([] if open_browser else ['--no-open']), '--dir', str(self.destination), *args],
                               env=env, capture_output=True, text=True, timeout=15)
 
     def test_allowlist_and_reproducibility(self):
@@ -99,6 +100,36 @@ else:
         result = self.run_installer('--dev')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.destination/'current/extension/manifest.json').is_file())
+
+    def test_signed_install_opens_manager_and_copies_local_xpi_path(self):
+        signed = self.assets/f'sync-calendar-epitech-{VERSION}.xpi'
+        shutil.copyfile(self.assets/f'sync-calendar-epitech-{VERSION}.zip', signed)
+        with zipfile.ZipFile(signed, 'a') as z:
+            z.writestr('META-INF/mozilla.rsa', 'signature fixture')
+        build.checksums(self.assets)
+        for name, code in {
+            'wl-copy': 'import os,sys;open(os.environ["MOCK_CLIPBOARD"],"w").write(sys.stdin.read())',
+            'firefox': 'import os,sys;open(os.environ["MOCK_FIREFOX"],"w").write("|".join(sys.argv[1:]))'
+        }.items():
+            executable = self.bin/name
+            executable.write_text('#!/usr/bin/env python3\n'+code+'\n')
+            executable.chmod(0o755)
+        result = self.run_installer(open_browser=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('copié dans le presse-papiers', result.stdout)
+        self.assertEqual((self.root/'clipboard.txt').read_text(), str(self.destination/'current'/signed.name))
+        import time
+        for _ in range(100):
+            if (self.root/'firefox.txt').exists() and (self.root/'firefox.txt').read_text() == 'about:addons':
+                break
+            time.sleep(0.01)
+        self.assertEqual((self.root/'firefox.txt').read_text(), 'about:addons')
+        (self.root/'clipboard.txt').unlink()
+        (self.root/'firefox.txt').unlink()
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root/'clipboard.txt').exists())
+        self.assertFalse((self.root/'firefox.txt').exists())
 
     def test_corrupted_asset_rejected(self):
         with (self.assets/f'sync-calendar-epitech-{VERSION}.zip').open('ab') as f:
