@@ -127,13 +127,13 @@ Couleurs par défaut :
 
 ## Ce qui est synchronisé
 
-L’extension crée les événements absents et actualise ceux dont les données My ont changé. Un identifiant stable et des propriétés privées évitent les doublons à la relance et après une interruption. Elle ne supprime jamais les événements disparus de My, conformément à un fonctionnement de copie/enregistrement.
+L’extension crée les événements absents et actualise ceux dont les données My ont changé. Un identifiant stable et des propriétés privées évitent les doublons à la relance et après une interruption. La synchronisation normale conserve les anciens événements. Le bouton **Nettoyer les anciens imports** permet de retirer explicitement ceux qui ne figurent plus dans tes inscriptions, dans la période et les semestres configurés.
 
 Elle ne modifie pas My, n’inscrit à aucune activité et n’invite aucun intervenant. Une modification faite dans Google n’est pas envoyée à My ; les champs gérés peuvent être remplacés lors d’une modification ultérieure des données source.
 
-La réponse planning contient des activités facultatives et des compteurs collectifs d’inscriptions. Elle ne donne pas ton inscription personnelle : l’extension importe donc le planning accessible sans prétendre filtrer les seules activités auxquelles tu es inscrit.
+Toutes les requêtes My utilisent désormais `registered=me` : seuls les événements où tu es inscrit sont importés. Les compteurs collectifs d’inscriptions ne sont pas utilisés pour décider si tu participes à un événement.
 
-Pour une soutenance à créneaux, l’horaire importé est le créneau global du planning. Ton sous-créneau personnel nécessite une autre réponse API. Les plages `activityStartDate` / `activityEndDate` ne remplacent pas les horaires de séance. Les occurrences sont importées comme événements datés, sans reconstituer de règles de récurrence.
+Pour une soutenance à créneaux, les champs `mySlotStartDate` et `mySlotEndDate` sont prioritaires : l’extension importe ton sous-créneau personnel quand My le fournit. Sinon, elle utilise le créneau global. Les plages `activityStartDate` / `activityEndDate` ne remplacent pas les horaires de séance. Les occurrences sont importées comme événements datés, sans reconstituer de règles de récurrence.
 
 Cette extension gère un nouvel agenda ; elle ne reprend pas les événements créés précédemment par le programme Python. Désactiver ou supprimer l’ancien agenda de copie si tu l’avais déjà utilisé, pour ne pas afficher deux copies.
 
@@ -229,3 +229,15 @@ Depuis la version 1.1.1, le message indique le motif et l’opération refusée 
 - Un refus générique d’accès à l’agenda n’est pas traité comme une autorisation OAuth manquante : il faut vérifier les permissions de l’agenda avec le compte connecté.
 
 Le contrôle d’accès Google précède la récupération du planning My. L’application conserve le scope limité `calendar.app.created` ; elle ne demande pas l’accès à tous les agendas pour masquer une erreur 403.
+
+## Inscriptions et correction des anciens imports (1.1.2)
+
+L’import utilise `registered=me` sur chaque semaine et chaque semestre demandé. Les anciennes réussites de synchronisation sont invalidées une fois pour appliquer ce filtre dès la prochaine visite du jour.
+
+Les événements importés avant cette correction restent présents jusqu’à un nettoyage explicite :
+
+1. Vérifier la période et les semestres dans les réglages.
+2. Cliquer **Nettoyer les anciens imports**, puis confirmer.
+3. L’extension récupère à nouveau toutes tes inscriptions, met à jour tes événements et retire de l’agenda dédié les anciens imports absents de cette sélection.
+
+Le nettoyage ne traite que les événements marqués par cette extension pour le compte My connecté, avec un horaire dans la période configurée et un ETag Google. Il préserve les événements personnels, ceux d’autres comptes/applications, ceux hors période, et ceux modifiés entre lecture et suppression. Toute erreur pendant la récupération My empêche les suppressions.

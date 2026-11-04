@@ -61,32 +61,47 @@
     const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));
     return Array.from(new Uint8Array(bytes),v=>v.toString(16).padStart(2,'0')).join('');
   }
+  function eventTimes(e){
+    const personal=e.mySlotStartDate!=null || e.mySlotEndDate!=null;
+    return {start:personal?e.mySlotStartDate:e.startDate,end:personal?e.mySlotEndDate:e.endDate,personal};
+  }
+  function cleanupCandidate(event,registeredIds,account,range){
+    const p=event.extendedProperties?.private;
+    if(p?.managedBy!=='my-firefox-v1' || p.myAccount!==account || !p.myId || registeredIds.has(p.myId) || !event.etag)return false;
+    const start=event.start?.dateTime;
+    if(!start || !Number.isFinite(Date.parse(start)))return false;
+    const date=day(new Date(start));
+    return date>=range.start && date<=range.end;
+  }
   function validEvent(e) {
     if (e.id===undefined || e.id===null) throw new Error('Événement sans identifiant.');
-    for (const s of [e.startDate,e.endDate]) if (typeof s!=='string' || !/(Z|[+-]\d\d:\d\d)$/.test(s) || !Number.isFinite(Date.parse(s))) throw new Error(`Date invalide pour My ${e.id}.`);
-    if (Date.parse(e.endDate)<=Date.parse(e.startDate)) throw new Error(`Durée invalide pour My ${e.id}.`);
+    const times=eventTimes(e);
+    for (const s of [times.start,times.end]) if (typeof s!=='string' || !/(Z|[+-]\d\d:\d\d)$/.test(s) || !Number.isFinite(Date.parse(s))) throw new Error(`Date invalide pour My ${e.id}.`);
+    if (Date.parse(times.end)<=Date.parse(times.start)) throw new Error(`Durée invalide pour My ${e.id}.`);
   }
   async function eventBody(e,config,accountId,palette) {
     validEvent(e);
+    const times=eventTimes(e);
     const cat=String(e.unitCode || (e.isExam?'Examens':'Autres'));
     const title=e.fullTitle || e.title || e.activityName || 'Événement Epitech';
     const room=r=>typeof r==='string'?r:String(r.name || r.title || r.code || r.id || '');
     const people=[...(e.instructors||[]),...(e.sessionLeader?[e.sessionLeader]:[])];
     const lines=[e.activityDescription||'',`Module : ${e.unitName||cat} (${cat})`,`Identifiant My : ${e.id}`];
     if(people.length) lines.push('Intervenants : '+people.map(p=>typeof p==='string'?p:`${p.firstname||''} ${p.lastname||''} <${p.login||''}>`).join('; '));
-    if(e.activitySlotsEnabled) lines.push('Créneau global : cette API ne précise pas votre sous-créneau individuel.');
+    if(times.personal)lines.push('Horaire : ton créneau personnel d’inscription.');
+    else if(e.activitySlotsEnabled)lines.push('Créneau global : aucun sous-créneau personnel fourni par My.');
     lines.push('Source : https://my.epitech.eu/planning');
     const body={summary:config.categoryInTitle===false?title:`[${cat}] ${title}`,
       description:lines.map(esc).join('<br>')+'<br><br>Données complètes My :<pre>'+esc(JSON.stringify(e,null,2))+'</pre>',
       location:(e.rooms||[]).map(room).filter(Boolean).join(', '),
-      start:{dateTime:new Date(e.startDate).toISOString(),timeZone:'Europe/Paris'},
-      end:{dateTime:new Date(e.endDate).toISOString(),timeZone:'Europe/Paris'},
+      start:{dateTime:new Date(times.start).toISOString(),timeZone:'Europe/Paris'},
+      end:{dateTime:new Date(times.end).toISOString(),timeZone:'Europe/Paris'},
       colorId:color(cat,config.colors,palette),source:{title:'My Epitech',url:'https://my.epitech.eu/planning'}};
     body.extendedProperties={private:{managedBy:'my-firefox-v1',myId:String(e.id),myAccount:accountId,category:cat,sourceHash:await hash(stable(body))}};
     return body;
   }
   function syncSettings(config) {
-    return {start:config.start,end:config.end,semesters:config.semesters,colors:config.colors,categoryInTitle:config.categoryInTitle};
+    return {selection:'registered-me-v1',start:config.start,end:config.end,semesters:config.semesters,colors:config.colors,categoryInTitle:config.categoryInTitle};
   }
   function syncState({connected,running,lastSuccess,error,today,settingsHash}) {
     if(!connected)return 'disconnected';
@@ -123,6 +138,6 @@
     }
     return {message,reason,help,reconnect,retryable};
   }
-  const api={calendarError,syncSettings,syncState,PALETTE,claims,account,day,due,dates,weeks,color,stable,hash,validEvent,eventBody};
+  const api={eventTimes,cleanupCandidate,calendarError,syncSettings,syncState,PALETTE,claims,account,day,due,dates,weeks,color,stable,hash,validEvent,eventBody};
   root.Core=api; if(typeof module!=='undefined') module.exports=api;
 })(globalThis);

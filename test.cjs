@@ -31,10 +31,10 @@ test('détails, couleurs, horaires de séance et ID stable',async()=>{
   assert.equal(next.extendedProperties.private.myId,body.extendedProperties.private.myId);
   assert.notEqual(next.extendedProperties.private.sourceHash,body.extendedProperties.private.sourceHash);
 });
-function harness({googleFailure=null,grantedScope=null}={}){
+function harness({googleFailure=null,grantedScope=null,emptyMy=false}={}){
   const store={credentials:{client_id:'test.apps.googleusercontent.com'},google:{access_token:'fake',refresh_token:'fake',expiresAt:Date.now()+3600000,sub:'google-user'},
     config:{start:'2026-11-23',end:'2026-11-29',semesters:[1]}};
-  const records=new Map(),calls={my:0,calendar:0,insert:0,patch:0,openMy:0};
+  const records=new Map(),calls={my:0,calendar:0,insert:0,patch:0,openMy:0,removed:0,queries:[]};
   let listener,failed=false,source=structuredClone(sample);
   const response=(data,status=200)=>new Response(JSON.stringify(data),{status});
   const browser={identity:{getRedirectURL:()=> 'https://extension-id.extensions.allizom.org/',launchWebAuthFlow:async({url})=>{const auth=new URL(url);assert.equal(auth.searchParams.get('code_challenge_method'),'S256');return 'http://127.0.0.1/mozoauth2/extension-id?'+new URLSearchParams({code:'fake-code',state:auth.searchParams.get('state')});}},storage:{local:{get:async k=>({[k]:structuredClone(store[k])}),set:async obj=>Object.assign(store,structuredClone(obj)),remove:async k=>{delete store[k];}}},
@@ -45,13 +45,14 @@ function harness({googleFailure=null,grantedScope=null}={}){
     fetch:async(url,opts)=>{
       if(url==='https://oauth2.googleapis.com/token')return response({access_token:'fake-token',refresh_token:'fake-refresh',expires_in:3600,...(grantedScope===null?{}:{scope:grantedScope})});
       if(url==='https://www.googleapis.com/oauth2/v3/userinfo')return response({sub:'google-user',email:'student@example.org'});
-      if(url.startsWith('https://my.epitech.eu/')){calls.my++;await new Promise(r=>setImmediate(r));return response([source],failed?401:200);}
+      if(url.startsWith('https://my.epitech.eu/')){assert.equal(new URL(url).searchParams.get('registered'),'me');calls.queries.push(new URL(url).searchParams.toString());calls.my++;await new Promise(r=>setImmediate(r));return response(emptyMy?[]:[source],failed?401:200);}
       const p=new URL(url).pathname;
       if(p.endsWith('/colors') && googleFailure)return response(googleFailure,403);
       if(p.endsWith('/colors'))return response({event:Object.fromEntries(Object.entries(Core.PALETTE).map(([k,v])=>[k,{background:v}]))});
       if(p.endsWith('/calendars')&&opts.method==='POST'){calls.calendar++;return response({id:'calendar'});}
       if(p.endsWith('/events')&&opts.method==='GET')return response({items:[...records.values()]});
-      if(p.endsWith('/events')&&opts.method==='POST'){calls.insert++;const b=JSON.parse(opts.body);records.set(b.id,b);return response(b);}
+      if(p.endsWith('/events')&&opts.method==='POST'){calls.insert++;const b={...JSON.parse(opts.body),etag:'mock-etag'};records.set(b.id,b);return response(b);}
+      if(p.includes('/events/')&&opts.method==='DELETE'){const id=p.split('/').pop();assert.equal(opts.headers['If-Match'],records.get(id).etag);calls.removed++;records.delete(id);return new Response(null,{status:204});}
       if(p.includes('/events/')&&opts.method==='PATCH'){calls.patch++;const id=p.split('/').pop(),b={...records.get(id),...JSON.parse(opts.body)};records.set(id,b);return response(b);}
       throw Error('Unexpected mock request '+p);
     }});
@@ -159,4 +160,43 @@ test('consentement partiel : ne considère pas Google connecté sans accès Cale
   const result=await h.command({type:'connect'});
   assert.equal(result.ok,false);assert.match(result.error,/autorisation Google Calendar/);
   assert.equal(h.store.googleNeedsReconnect,true);assert.equal(h.calls.my,0);
+});
+
+test('inscriptions : chaque semaine inclut registered=me, même sans événement',async()=>{
+  const h=harness({emptyMy:true});h.store.config.end='2026-12-01';
+  await h.visit();await h.idle();
+  assert.equal(h.calls.my,2);
+  for(const q of h.calls.queries)assert.equal(new URLSearchParams(q).get('registered'),'me');
+  assert.equal(h.calls.insert,0);
+});
+test('soutenance : utilise le créneau personnel et refuse un créneau incomplet',async()=>{
+  const event={...sample,activitySlotsEnabled:true,mySlotStartDate:'2026-11-23T09:15:00Z',mySlotEndDate:'2026-11-23T09:30:00Z'};
+  const body=await Core.eventBody(event,{},'account');
+  assert.equal(body.start.dateTime,'2026-11-23T09:15:00.000Z');
+  assert.equal(body.end.dateTime,'2026-11-23T09:30:00.000Z');
+  assert.match(body.description,/créneau personnel/);
+  assert.throws(()=>Core.validEvent({...event,mySlotEndDate:null}));
+  const global=await Core.eventBody({...sample,mySlotStartDate:null,mySlotEndDate:null},{},'account');
+  assert.equal(global.end.dateTime,'2026-11-23T11:30:00.000Z');
+});
+test('nettoyage explicite : ne retire que les anciens imports non inscrits dans la période',async()=>{
+  const h=harness();await h.visit();await h.idle();
+  const original=[...h.records.values()][0];
+  function seed(id,myId,changes={}){
+    const copy=structuredClone(original);copy.id=id;copy.extendedProperties.private.myId=myId;
+    Object.assign(copy,changes);h.records.set(id,copy);return copy;
+  }
+  seed('old-import','999');
+  seed('outside-range','888',{start:{dateTime:'2025-09-01T09:00:00Z'}});
+  seed('personally-added','777').extendedProperties.private.managedBy='another-app';
+  seed('without-etag','666',{etag:undefined});
+  await h.command({type:'force'});await h.idle();assert.equal(h.calls.removed,0);
+  await h.command({type:'cleanup'});await h.idle();
+  assert.equal(h.calls.removed,1);assert.equal(h.records.has('old-import'),false);
+  for(const id of ['outside-range','personally-added','without-etag',original.id])assert.equal(h.records.has(id),true);
+});
+test('échec de lecture des inscriptions : aucun nettoyage possible',async()=>{
+  const h=harness();await h.visit();await h.idle();
+  h.fail();await h.command({type:'cleanup'});await h.idle();
+  assert.equal(h.calls.removed,0);assert.equal(h.records.size,1);assert.equal(h.store.status.error,true);
 });

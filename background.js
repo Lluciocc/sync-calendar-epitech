@@ -82,7 +82,7 @@ async function google(path,options={},retried=false) {
   const token=await googleToken(false);
   let response,diagnostic;
   for(let i=0;i<5;i++) {
-    response=await timedFetch(BASE+path,{method:options.method||'GET',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},...(options.body?{body:JSON.stringify(options.body)}:{})});
+    response=await timedFetch(BASE+path,{method:options.method||'GET',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',...options.headers},...(options.body?{body:JSON.stringify(options.body)}:{})});
     diagnostic=null;
     if(!response.ok){
       let payload={};try{payload=await response.json();}catch{}
@@ -94,7 +94,7 @@ async function google(path,options={},retried=false) {
   if(response.status===401 && !retried){const old=await get('google');await put('google',{...old,expiresAt:0});return google(path,options,true);}
   if(!response.ok){
     if(diagnostic.reconnect)await put('googleNeedsReconnect',true);
-    const operation=path==='/colors'?'lecture des couleurs':path==='/calendars'?'création de l’agenda':options.method==='POST'?'création d’un événement':options.method==='PATCH'?'mise à jour d’un événement':'lecture du calendrier';
+    const operation=path==='/colors'?'lecture des couleurs':path==='/calendars'?'création de l’agenda':options.method==='POST'?'création d’un événement':options.method==='PATCH'?'mise à jour d’un événement':options.method==='DELETE'?'nettoyage d’un ancien import':'lecture du calendrier';
     const e=new Error(`Google Calendar : HTTP ${response.status} (${diagnostic.reason}, ${operation}). ${diagnostic.message}`);
     e.status=response.status;e.help=diagnostic.help;throw e;
   }
@@ -108,7 +108,7 @@ async function loadMy(session,cfg) {
   for(let i=0;i<spans.length;i++) {
     await status(`Lecture My : semaine ${i+1}/${spans.length}…`);
     for(const semester of semesters) {
-      const params=new URLSearchParams({semester,cursus:c.cursus||'PGE',startDate:spans[i][0],endDate:spans[i][1]});
+      const params=new URLSearchParams({semester,cursus:c.cursus||'PGE',startDate:spans[i][0],endDate:spans[i][1],registered:'me'});
       let res;
       for(let attempt=0;attempt<4;attempt++) {
         res=await timedFetch('https://my.epitech.eu/api/events?'+params,{headers:{Authorization:'Bearer '+session.token,Accept:'application/json'},credentials:'omit'});
@@ -129,7 +129,7 @@ async function loadMy(session,cfg) {
   }
   return {events:[...all.values()],claims:c};
 }
-async function perform(force) {
+async function perform(force,cleanup=false) {
   const cfg=await config(),session=await get('mySession');
   if(!session)throw new Error('Ouvre My Epitech en étant connecté pour récupérer la session.');
   if(!force && !cfg.enabled)return;
@@ -154,7 +154,7 @@ async function perform(force) {
     const created=await google('/calendars',{method:'POST',body:{summary:'Epitech — My',description:'Planning copié depuis My Epitech.',timeZone:'Europe/Paris'}});
     calendarId=created.id;calendars[key]=calendarId;await put('calendars',calendars);
   }
-  const counts={created:0,updated:0,unchanged:0};
+  const counts={created:0,updated:0,unchanged:0,removed:0,protected:0};
   if(calendarId) {
     const path='/calendars/'+encodeURIComponent(calendarId)+'/events',existing=new Map();
     let page;
@@ -182,20 +182,37 @@ async function perform(force) {
         }
       }
     }
+    if(cleanup){
+      const registeredIds=new Set(bodies.map(b=>b.extendedProperties.private.myId));
+      const range=Core.dates(source.claims,cfg);
+      for(const event of existing.values()){
+        if(!Core.cleanupCandidate(event,registeredIds,account,range))continue;
+        await status('Nettoyage des anciens imports non inscrits…');
+        try{
+          await google(path+'/'+encodeURIComponent(event.id)+'?sendUpdates=none',{
+            method:'DELETE',headers:{'If-Match':event.etag}});
+          counts.removed++;
+        }catch(error){
+          if(error.status===404 || error.status===410)continue;
+          if(error.status===412){counts.protected++;continue;}
+          throw error;
+        }
+      }
+    }
   }
   const cache=await get('calendarCache')||{};
   cache[key]=bodies.map(b=>({id:b.extendedProperties.private.myId,title:b.summary,start:b.start.dateTime,end:b.end.dateTime,location:b.location,category:b.extendedProperties.private.category,color:palette[b.colorId]}));
   await put('calendarCache',cache);
-  success[key]={day:today,at:new Date().toISOString(),counts,total:bodies.length,settingsHash};await put('success',success);
+  success[key]={day:today,at:new Date().toISOString(),counts,total:bodies.length,settingsHash,cleanup};await put('success',success);
   await browser.storage.local.remove('syncAfterConnect');
   activeVisit=false;lastAttempt=0;
-  await status(`Synchronisé : ${counts.created} créé(s), ${counts.updated} modifié(s), ${counts.unchanged} inchangé(s).`);
+  await status(`Synchronisé : ${counts.created} créé(s), ${counts.updated} modifié(s), ${counts.unchanged} inchangé(s).`+(cleanup?` Nettoyage : ${counts.removed} retiré(s), ${counts.protected} modification(s) concurrente(s) préservée(s).`:''));
 }
-async function sync(force=false) {
+async function sync(force=false,cleanup=false) {
   if(running)return running;
   if(!force && Date.now()-lastAttempt<5*60*1000)return;
   lastAttempt=Date.now();
-  running=perform(force).catch(async error=>{await status(error.message,true,error.help);throw error;});
+  running=perform(force,cleanup).catch(async error=>{await status(error.message,true,error.help);throw error;});
   try{return await running;}finally{running=null;await browser.browserAction.setBadgeText({text:(await get('status'))?.error?'!':''});}
 }
 async function visit(message,sender){
@@ -270,6 +287,7 @@ browser.runtime.onMessage.addListener((m,sender)=>{
         for(const key of ['google','googleNeedsReconnect','syncAfterConnect'])await browser.storage.local.remove(key);
         await status('Tu es déconnecté de Google dans cette extension.');return {ok:true};
       }
+      if(m.type==='cleanup'){sync(true,true).catch(()=>{});return {ok:true};}
       if(m.type==='force'){sync(true).catch(()=>{});return {ok:true};}
       return {ok:false,error:'Commande inconnue.'};
     }catch(e){return {ok:false,error:e.message};}

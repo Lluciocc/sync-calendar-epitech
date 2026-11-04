@@ -85,6 +85,7 @@
     $('eventCount').textContent=total===null?'—':String(total)+' importé'+(total>1?'s':'');
     const notice=$('notice');notice.replaceChildren();notice.hidden=true;notice.classList.remove('error');
     if(s.status?.error){notice.hidden=false;notice.classList.add('error');notice.textContent=s.status.text;}
+    else if(!busy && s.lastSuccess?.cleanup){notice.hidden=false;notice.textContent=`Nettoyage terminé : ${s.lastSuccess.counts.removed} ancien(s) import(s) retiré(s).`+(s.lastSuccess.counts.protected?` ${s.lastSuccess.counts.protected} modification(s) concurrente(s) préservée(s).`:'');}
     if(s.status?.helpUrl?.startsWith('https://console.cloud.google.com/apis/library/calendar-json.googleapis.com')){
       const link=document.createElement('a');link.href=s.status.helpUrl;link.target='_blank';link.rel='noopener';link.textContent=s.status.helpLabel||'Configurer Google Calendar';link.className='error-help';notice.append(document.createElement('br'),link);
     }
@@ -101,6 +102,7 @@
       $('redirect').textContent=s.redirect;$('disconnect').hidden=!s.googleEmail;
       $('connectSettings').textContent=connected?'Changer de compte':'Connecter Google';$('connectSettings').disabled=busy;
       $('disconnect').disabled=busy;$('save').disabled=busy;
+      if($('cleanup'))$('cleanup').disabled=busy||!connected||!s.myLogin||s.myExpired;
     }
   }
   async function refresh(){const s=await send('state');render(s);return s;}

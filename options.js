@@ -28,3 +28,5 @@ CalendarUI.refresh().then(s=>{
   for(const key of ['start','end'])$(key).value=s.config[key];
   $('semesters').value=s.config.semesters.join(',');$('colors').value=JSON.stringify(s.config.colors,null,2);colorGrid(s.config.colors);
 }).catch(e=>CalendarUI.toast(e.message,true));
+
+handle('cleanup',async()=>{if(!window.confirm('Retirer les anciens événements importés par l’extension qui sont absents de tes inscriptions, pour la période et les semestres configurés ? Les événements personnels sont conservés.'))return;await CalendarUI.send('cleanup');await CalendarUI.refresh();});
